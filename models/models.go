@@ -11,22 +11,15 @@ type URLInput struct {
 	URL string `json:"url" binding:"required"`
 }
 
-type TableData struct {
-	TableDescription string     `json:"table_description"`
-	Data            [][]string `json:"data"`
-}
-
 type ContentStruct struct {
-	Text      string            `json:"text"`
-	KeyValues map[string]string `json:"key_values"`
-	Tables    []TableData       `json:"tables"`
+	ExtractedContent map[string]interface{} `json:"extracted_content"`
 }
 
 type StructuredResponse struct {
 	DocumentID  string        `json:"document_id"`
 	Filename    string        `json:"filename"`
-	IsRuleset   bool         `json:"is_ruleset"`
-	FileType    string       `json:"file_type"`
-	UploadDate  string       `json:"upload_date"`
+	IsRuleset   bool          `json:"is_ruleset"`
+	FileType    string        `json:"file_type"`
+	UploadDate  string        `json:"upload_date"`
 	Content     ContentStruct `json:"content"`
 }

@@ -17,8 +17,8 @@ import (
 )
 
 type GeminiService struct {
-	client     *genai.Client
-	model      *genai.GenerativeModel
+	client      *genai.Client
+	model       *genai.GenerativeModel
 	ruleService *RuleService
 }
 
@@ -57,9 +57,11 @@ func (s *GeminiService) ProcessDocument(ctx context.Context, text, filename stri
   "file_type": "",
   "upload_date": "",
   "content": {
-    "text": "%s",
-    "key_values": {},
-    "tables": []
+    "extracted_content": {
+      key1: value1,
+	  key2: value2,
+	  key3: value3
+    }
   }
 }
 
@@ -68,9 +70,10 @@ Important:
 2. Extract any metadata or key-value pairs from headers or summary sections
 3. Determine if the content represents rules/policies or data
 4. Preserve table structure and relationships
+5. Make sure you include as much information as possible from the document.
 
 Document to analyze:
-%s`, text, text)
+%s`, text)
 
 	resp, err := s.model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
@@ -90,7 +93,7 @@ Document to analyze:
 	// Clean the response text to ensure it's valid JSON
 	jsonStr := string(textContent)
 	jsonStr = strings.TrimSpace(jsonStr)
-	
+
 	// Remove any potential markdown code block markers
 	jsonStr = strings.TrimPrefix(jsonStr, "```json")
 	jsonStr = strings.TrimPrefix(jsonStr, "```")
@@ -111,8 +114,8 @@ Document to analyze:
 	structuredResp.UploadDate = time.Now().Format(time.RFC3339)
 
 	// Log the details of the structured response
-	log.Printf("Structured Response - IsRuleset: %v, FileType: %s", 
-		structuredResp.IsRuleset, 
+	log.Printf("Structured Response - IsRuleset: %v, FileType: %s",
+		structuredResp.IsRuleset,
 		structuredResp.FileType,
 	)
 
