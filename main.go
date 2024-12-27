@@ -35,13 +35,13 @@ func main() {
 	imageService := services.NewImageService(llmClient)
 	processorService := services.NewProcessorService(fileService, imageService)
 
-	geminiService, err := services.NewGeminiService(geminiAPIKey)
+	ruleService := services.NewRuleService()
+
+	geminiService, err := services.NewGeminiService(geminiAPIKey, ruleService)
 	if err != nil {
 		log.Fatalf("Error initializing Gemini service: %v", err)
 	}
 	defer geminiService.Close()
-
-	ruleService := services.NewRuleService()
 
 	// Initialize handler
 	handler := handlers.NewFileHandler(processorService, geminiService, ruleService)

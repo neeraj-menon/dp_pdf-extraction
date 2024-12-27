@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -16,11 +17,12 @@ import (
 )
 
 type GeminiService struct {
-	client *genai.Client
-	model  *genai.GenerativeModel
+	client     *genai.Client
+	model      *genai.GenerativeModel
+	ruleService *RuleService
 }
 
-func NewGeminiService(apiKey string) (*GeminiService, error) {
+func NewGeminiService(apiKey string, ruleService *RuleService) (*GeminiService, error) {
 	ctx := context.Background()
 	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
@@ -29,8 +31,9 @@ func NewGeminiService(apiKey string) (*GeminiService, error) {
 
 	model := client.GenerativeModel("gemini-1.5-flash")
 	return &GeminiService{
-		client: client,
-		model:  model,
+		client:      client,
+		model:       model,
+		ruleService: ruleService,
 	}, nil
 }
 
@@ -44,6 +47,8 @@ func generateUUID() string {
 }
 
 func (s *GeminiService) ProcessDocument(ctx context.Context, text, filename string) (*models.StructuredResponse, error) {
+	log.Printf("ProcessDocument called with filename: %s (text length: %d)", filename, len(text))
+
 	prompt := fmt.Sprintf(`You are a document analysis system. Analyze the following document text and return a JSON object ONLY (no other text) with this exact structure:
 {
   "document_id": "",  // leave empty, will be filled later
@@ -135,6 +140,26 @@ Remember: Return ONLY valid JSON, no other text or explanation.`, text)
 	structuredResp.DocumentID = generateUUID()
 	structuredResp.Filename = filename
 	structuredResp.UploadDate = time.Now().Format(time.RFC3339)
+
+	// Log the details of the structured response
+	log.Printf("Structured Response - IsRuleset: %v, FileType: %s", 
+		structuredResp.IsRuleset, 
+		structuredResp.FileType,
+	)
+
+	// Determine whether to add as rule or data based on is_ruleset flag
+	if s.ruleService != nil {
+		var err error
+		if structuredResp.IsRuleset {
+			err = s.ruleService.AddRule(ctx, &structuredResp)
+		} else {
+			err = s.ruleService.AddData(ctx, &structuredResp)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to process document: %v", err)
+		}
+	}
 
 	return &structuredResp, nil
 }

@@ -73,23 +73,6 @@ func (h *FileHandler) HandleFileUpload(c *gin.Context) {
 		return
 	}
 
-	// Handle rules or data based on the response
-	if structuredResp.IsRuleset {
-		if err := h.rules.AddRule(c.Request.Context(), structuredResp); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("failed to add rule: %v", err),
-			})
-			return
-		}
-	} else {
-		if err := h.rules.AddData(c.Request.Context(), structuredResp); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("failed to add data: %v", err),
-			})
-			return
-		}
-	}
-
 	log.Printf("Successfully processed file. Document ID: %s", structuredResp.DocumentID)
 	c.JSON(http.StatusOK, structuredResp)
 }
@@ -119,23 +102,6 @@ func (h *FileHandler) HandleURLProcess(c *gin.Context) {
 			"error": fmt.Sprintf("failed to process with Gemini: %v", err),
 		})
 		return
-	}
-
-	// Handle rules or data based on the response
-	if structuredResp.IsRuleset {
-		if err := h.rules.AddRule(c.Request.Context(), structuredResp); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("failed to add rule: %v", err),
-			})
-			return
-		}
-	} else {
-		if err := h.rules.AddData(c.Request.Context(), structuredResp); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("failed to add data: %v", err),
-			})
-			return
-		}
 	}
 
 	log.Printf("Successfully processed URL. Document ID: %s", structuredResp.DocumentID)
