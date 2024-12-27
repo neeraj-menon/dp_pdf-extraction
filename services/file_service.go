@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,11 +19,13 @@ import (
 
 type FileService struct {
 	tikaServerURL string
+	imageService  *ImageService
 }
 
-func NewFileService() *FileService {
+func NewFileService(imageService *ImageService) *FileService {
 	return &FileService{
 		tikaServerURL: "http://localhost:9998",
+		imageService:  imageService,
 	}
 }
 
@@ -102,17 +107,207 @@ func (s *FileService) ExtractTextFromFile(filePath string) (string, []string, er
 	}
 
 	text := string(extractedText)
-	log.Printf("Successfully extracted %d characters of text", len(text))
+	if strings.Contains(text, "<?xml") && !strings.Contains(text, "<p>") {
+		log.Printf("Tika returned only metadata without text content")
+		return "", nil, fmt.Errorf("no text content found in file")
+	}
 
-	return text, []string{}, nil
+	cleanedText := s.cleanText(text)
+	if cleanedText == "" {
+		log.Printf("No text content found after cleaning")
+		return "", nil, fmt.Errorf("no text content found in file")
+	}
+
+	log.Printf("Successfully extracted %d characters of text", len(text))
+	return cleanedText, nil, nil
 }
 
 func (s *FileService) ExtractTextFromPDF(filePath string) (string, []string, error) {
-	return s.ExtractTextFromFile(filePath)
+	log.Printf("Extracting text and images from PDF: %s", filePath)
+
+	// First, get text from entire PDF using Tika
+	tikaText, _, err := s.ExtractTextFromFile(filePath)
+	if err != nil {
+		// If Tika fails to extract text, proceed with image processing
+		if strings.Contains(err.Error(), "no text content found") {
+			log.Printf("No text found in PDF using Tika, proceeding with image processing")
+			return s.processPDFWithImages(filePath)
+		}
+		return "", nil, err
+	}
+
+	// Clean the Tika text and check if it's empty or just whitespace/escape sequences
+	cleanText := s.cleanText(tikaText)
+	cleanText = strings.ReplaceAll(cleanText, "\n", "")
+	cleanText = strings.ReplaceAll(cleanText, "\r", "")
+	cleanText = strings.ReplaceAll(cleanText, "\t", "")
+
+	if len(cleanText) > 0 {
+		log.Printf("Found valid text content using Tika, skipping image processing")
+		return tikaText, nil, nil
+	}
+
+	log.Printf("No valid text content found using Tika, attempting image processing")
+	return s.processPDFWithImages(filePath)
+}
+
+func (s *FileService) processPDFWithImages(filePath string) (string, []string, error) {
+	// Get absolute path for the input file
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		log.Printf("Error getting absolute path for %s: %v", filePath, err)
+		return "", nil, fmt.Errorf("error getting absolute path: %v", err)
+	}
+
+	// Use temp directory in project root
+	tempDir := filepath.Join("..", "temp")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		log.Printf("Error creating temp directory: %v", err)
+		return "", nil, fmt.Errorf("error creating temp directory: %v", err)
+	}
+
+	timestamp := time.Now().Format("20060102_150405")
+	pdfImageDir := filepath.Join(tempDir, fmt.Sprintf("pdf_images_%s", timestamp))
+	if err := os.MkdirAll(pdfImageDir, 0755); err != nil {
+		log.Printf("Error creating image directory: %v", err)
+		return "", nil, fmt.Errorf("error creating image directory: %v", err)
+	}
+
+	// Get absolute path for the output directory to pass to Python script
+	absPdfImageDir, err := filepath.Abs(pdfImageDir)
+	if err != nil {
+		log.Printf("Error getting absolute path for output directory: %v", err)
+		return "", nil, fmt.Errorf("error getting absolute path for output directory: %v", err)
+	}
+
+	// Get path to Python script
+	scriptPath := filepath.Join("..", "file_processor", "scripts", "pdf_to_image.py")
+	absScriptPath, err := filepath.Abs(scriptPath)
+	if err != nil {
+		log.Printf("Error getting script path: %v", err)
+		return "", nil, fmt.Errorf("error getting script path: %v", err)
+	}
+
+	log.Printf("Using script path: %s", absScriptPath)
+
+	// Run Python script to convert PDF pages to images
+	cmd := exec.Command("python", absScriptPath, absFilePath, absPdfImageDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Error running PDF to image conversion: %v\nStderr: %s", err, stderr.String())
+		return "", nil, fmt.Errorf("error converting PDF to images: %v", err)
+	}
+
+	// Get image paths from script output and validate each path
+	var imagePaths []string
+	imageMap := make(map[int]string) // Map to store page number -> image path
+	maxPage := 0
+
+	// First pass: collect and sort image paths
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+
+		// Use the path as-is from Python script
+		imagePath := strings.TrimSpace(line)
+		
+		// Extract page number from filename
+		base := filepath.Base(imagePath)
+		var pageNum int
+		if _, err := fmt.Sscanf(base, "page_%d.jpg", &pageNum); err != nil {
+			log.Printf("Warning: Could not parse page number from filename %s: %v", base, err)
+			continue
+		}
+
+		// Read the image to check if it contains actual content
+		imgData, err := s.ReadImage(imagePath)
+		if err != nil {
+			log.Printf("Warning: Could not read image %s: %v", imagePath, err)
+			continue
+		}
+
+		// Check if the image has actual content by looking at file size
+		if len(imgData) < 1000 { // Skip very small images
+			log.Printf("Page %d appears to be empty or too small, skipping", pageNum)
+			continue
+		}
+
+		log.Printf("Found page %d with content: %s", pageNum, imagePath)
+		imageMap[pageNum] = imagePath
+		if pageNum > maxPage {
+			maxPage = pageNum
+		}
+		imagePaths = append(imagePaths, imagePath)
+	}
+
+	if len(imagePaths) == 0 {
+		log.Printf("No valid content found in PDF images")
+		return "", nil, fmt.Errorf("no valid content found in PDF")
+	}
+
+	// Process the pages in order
+	var imageTexts []string
+
+	for page := 1; page <= maxPage; page++ {
+		imagePath, exists := imageMap[page]
+		if !exists {
+			continue
+		}
+
+		imgData, err := s.ReadImage(imagePath)
+		if err != nil {
+			log.Printf("Warning: Could not read image for page %d: %v", page, err)
+			continue
+		}
+
+		log.Printf("Processing content on page %d", page)
+		imageText, err := s.imageService.ExtractInformationFromImage(imgData)
+		if err != nil {
+			log.Printf("Warning: Could not analyze image for page %d: %v", page, err)
+			continue
+		}
+
+		imageTexts = append(imageTexts, fmt.Sprintf("Page %d Content:\n%s", page, imageText))
+		log.Printf("Successfully processed page %d", page)
+	}
+
+	// Combine all extracted text
+	completeText := strings.Join(imageTexts, "\n\n")
+	log.Printf("Successfully extracted text from %d pages", len(imageTexts))
+	
+	return completeText, imagePaths, nil
 }
 
 func (s *FileService) ExtractTextFromDOCX(filePath string) (string, []string, error) {
 	return s.ExtractTextFromFile(filePath)
+}
+
+func (s *FileService) ExtractTextFromXLSX(filePath string) (string, []string, error) {
+	return s.ExtractTextFromFile(filePath)
+}
+
+func (s *FileService) ReadImage(filePath string) ([]byte, error) {
+	log.Printf("Reading image file: %s", filePath)
+	
+	// Verify the file exists and is accessible
+	if _, err := os.Stat(filePath); err != nil {
+		log.Printf("Error accessing image file: %v", err)
+		return nil, fmt.Errorf("error accessing image file: %v", err)
+	}
+
+	// Read the image file
+	imageData, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Printf("Error reading image file: %v", err)
+		return nil, fmt.Errorf("error reading image file: %v", err)
+	}
+
+	log.Printf("Successfully read %d bytes from image file", len(imageData))
+	return imageData, nil
 }
 
 func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, error) {
@@ -146,9 +341,13 @@ func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, er
 	c.OnHTML("p, article, section, div", func(e *colly.HTMLElement) {
 		text := strings.TrimSpace(e.Text)
 		if text != "" {
-			log.Printf("Extracting text block: %s", truncateString(text, 100))
-			textContent.WriteString(text)
-			textContent.WriteString("\n\n")
+			// Clean the text
+			text = s.cleanText(text)
+			if text != "" {
+				log.Printf("Extracting text block: %s", truncateString(text, 100))
+				textContent.WriteString(text)
+				textContent.WriteString("\n\n")
+			}
 		}
 	})
 
@@ -156,11 +355,15 @@ func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, er
 	c.OnHTML("h1, h2, h3, h4, h5, h6", func(e *colly.HTMLElement) {
 		text := strings.TrimSpace(e.Text)
 		if text != "" {
-			log.Printf("Extracting heading: %s", text)
-			headings = append(headings, text)
-			// Also add headings to main content
-			textContent.WriteString(text)
-			textContent.WriteString("\n\n")
+			// Clean the text
+			text = s.cleanText(text)
+			if text != "" {
+				log.Printf("Extracting heading: %s", text)
+				headings = append(headings, text)
+				// Also add headings to main content
+				textContent.WriteString(text)
+				textContent.WriteString("\n\n")
+			}
 		}
 	})
 
@@ -202,15 +405,26 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func (s *FileService) IsImageFile(filePath string) bool {
-	ext := strings.ToLower(filePath)
-	return strings.HasSuffix(ext, ".jpg") ||
-		strings.HasSuffix(ext, ".jpeg") ||
-		strings.HasSuffix(ext, ".png") ||
-		strings.HasSuffix(ext, ".gif") ||
-		strings.HasSuffix(ext, ".bmp")
-}
-
-func (s *FileService) ReadImage(filePath string) ([]byte, error) {
-	return os.ReadFile(filePath)
+// cleanText removes invalid characters, escape sequences, and normalizes whitespace
+func (s *FileService) cleanText(text string) string {
+	// Remove common escape sequences
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	
+	// Replace multiple newlines with a single newline
+	re := regexp.MustCompile(`\n\s*\n+`)
+	text = re.ReplaceAllString(text, "\n")
+	
+	// Remove non-printable characters except newline
+	re = regexp.MustCompile(`[^\x20-\x7E\n]`)
+	text = re.ReplaceAllString(text, "")
+	
+	// Replace multiple spaces with a single space
+	re = regexp.MustCompile(`\s+`)
+	text = re.ReplaceAllString(text, " ")
+	
+	// Trim leading/trailing whitespace
+	text = strings.TrimSpace(text)
+	
+	return text
 }
