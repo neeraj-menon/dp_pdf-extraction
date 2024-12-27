@@ -337,22 +337,22 @@ func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, er
 	var textContent strings.Builder
 	var headings []string
 
-	// Extract text from various HTML elements
-	c.OnHTML("p, article, section, div", func(e *colly.HTMLElement) {
+	// Extract text only from <p> tags
+	c.OnHTML("p", func(e *colly.HTMLElement) {
 		text := strings.TrimSpace(e.Text)
 		if text != "" {
 			// Clean the text
 			text = s.cleanText(text)
 			if text != "" {
-				log.Printf("Extracting text block: %s", truncateString(text, 100))
+				log.Printf("Extracting paragraph: %s", truncateString(text, 100))
 				textContent.WriteString(text)
 				textContent.WriteString("\n\n")
 			}
 		}
 	})
 
-	// Extract headings separately
-	c.OnHTML("h1, h2, h3, h4, h5, h6", func(e *colly.HTMLElement) {
+	// Extract headings for context
+	c.OnHTML("h1, h2, h3", func(e *colly.HTMLElement) {
 		text := strings.TrimSpace(e.Text)
 		if text != "" {
 			// Clean the text
@@ -360,9 +360,6 @@ func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, er
 			if text != "" {
 				log.Printf("Extracting heading: %s", text)
 				headings = append(headings, text)
-				// Also add headings to main content
-				textContent.WriteString(text)
-				textContent.WriteString("\n\n")
 			}
 		}
 	})
@@ -390,8 +387,8 @@ func (s *FileService) ExtractTextFromURL(targetURL string) (string, []string, er
 	// Get the final content
 	content := textContent.String()
 	if content == "" {
-		log.Printf("No text content found on webpage: %s", targetURL)
-		return "", nil, fmt.Errorf("no text content found on webpage: %s", targetURL)
+		log.Printf("No paragraph content found on webpage: %s", targetURL)
+		return "", nil, fmt.Errorf("no paragraph content found on webpage: %s", targetURL)
 	}
 
 	log.Printf("Successfully extracted text from webpage: %s", targetURL)
@@ -403,6 +400,7 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+
 }
 
 // cleanText removes invalid characters, escape sequences, and normalizes whitespace
