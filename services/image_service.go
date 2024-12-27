@@ -36,7 +36,7 @@ func (s *ImageService) ExtractInformationFromImage(imageData []byte) (string, er
 		return "", fmt.Errorf("error generating content: %v", err)
 	}
 
-	if resp.Candidates == nil || len(resp.Candidates) == 0 {
+	if resp.Candidates == nil {
 		log.Printf("No response generated from image analysis")
 		return "", fmt.Errorf("no response generated")
 	}
