@@ -29,7 +29,7 @@ func NewGeminiService(apiKey string, ruleService *RuleService) (*GeminiService, 
 		return nil, fmt.Errorf("failed to create Gemini client: %v", err)
 	}
 
-	model := client.GenerativeModel("gemini-pro")
+	model := client.GenerativeModel("gemini-1.5-flash")
 	model.SetTemperature(0.2)
 	return &GeminiService{
 		client:      client,
@@ -112,7 +112,7 @@ Text to analyze:
 		return nil, fmt.Errorf("failed to parse JSON: %v\nResponse was: %s", err, jsonStr)
 	}
 
-	log.Printf("Before metadata - DocumentID: %s, Filename: %s, UploadDate: %s", 
+	log.Printf("Before metadata - DocumentID: %s, Filename: %s, UploadDate: %s",
 		structuredResp.DocumentID, structuredResp.Filename, structuredResp.UploadDate)
 
 	// Generate new UUID
@@ -124,7 +124,7 @@ Text to analyze:
 	structuredResp.Filename = filename
 	structuredResp.UploadDate = time.Now().Format(time.RFC3339)
 
-	log.Printf("After metadata - DocumentID: %s, Filename: %s, UploadDate: %s", 
+	log.Printf("After metadata - DocumentID: %s, Filename: %s, UploadDate: %s",
 		structuredResp.DocumentID, structuredResp.Filename, structuredResp.UploadDate)
 
 	// Log the complete structured response
