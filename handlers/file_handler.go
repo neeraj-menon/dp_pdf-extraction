@@ -77,4 +77,20 @@ func (h *FileHandler) HandleFileUpload(c *gin.Context) {
 		"text":    text,
 		"pages":   len(imagePaths),
 	})
+
+	// Clean up directories after processing
+	if err := h.cleanupDirectories(); err != nil {
+		log.Printf("Warning: Error cleaning up directories: %v", err)
+	}
+}
+
+// cleanupDirectories removes the temp and uploads directories
+func (h *FileHandler) cleanupDirectories() error {
+	dirs := []string{"temp", "uploads"}
+	for _, dir := range dirs {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
