@@ -9,6 +9,7 @@ require (
 	github.com/gocolly/colly v1.2.0
 	github.com/google/generative-ai-go v0.5.0
 	google.golang.org/api v0.154.0
+	github.com/lib/pq v1.10.9
 )
 
 require (

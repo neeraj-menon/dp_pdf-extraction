@@ -30,7 +30,10 @@ func main() {
 	imageService := services.NewImageService(client)
 	fileService := services.NewFileService(imageService)
 	processorService := services.NewProcessorService(fileService, imageService)
-	ruleService := services.NewRuleService()
+	ruleService, err := services.NewRuleService()
+	if err != nil {
+		log.Fatalf("Failed to initialize rule service: %v", err)
+	}
 	geminiService, err := services.NewGeminiService(geminiAPIKey, ruleService)
 	if err != nil {
 		log.Fatalf("Error initializing Gemini service: %v", err)
