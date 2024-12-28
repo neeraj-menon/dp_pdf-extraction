@@ -29,7 +29,8 @@ func NewGeminiService(apiKey string, ruleService *RuleService) (*GeminiService, 
 		return nil, fmt.Errorf("failed to create Gemini client: %v", err)
 	}
 
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel("gemini-pro")
+	model.SetTemperature(0.2)
 	return &GeminiService{
 		client:      client,
 		model:       model,
@@ -54,30 +55,27 @@ func generateUUID() string {
 func (s *GeminiService) ProcessDocument(ctx context.Context, text, filename string) (*models.StructuredResponse, error) {
 	log.Printf("ProcessDocument called with filename: %s (text length: %d)", filename, len(text))
 
-	prompt := fmt.Sprintf(`You are a document analysis system. Analyze the following document text and return a JSON object ONLY (no other text) with this exact structure:
+	prompt := fmt.Sprintf(`Analyze the following document text and return ONLY a JSON object with this exact structure (no other text):
+
 {
-  "document_id": "",
-  "filename": "",
-  "is_ruleset": false,
-  "file_type": "",
-  "upload_date": "",
-  "content": {
-    "extracted_content": {
-      key1: value1,
-	  key2: value2,
-	  key3: value3
+    "document_id": "",
+    "filename": "",
+    "is_ruleset": false,
+    "file_type": "",
+    "upload_date": "",
+    "content": {
+        "extracted_content": {}
     }
-  }
 }
 
-Important:
-1. For spreadsheets (Excel, CSV), focus on identifying table structures and their meanings
-2. Extract any metadata or key-value pairs from headers or summary sections
-3. Determine if the content represents rules/policies or data
-4. Preserve table structure and relationships
-5. Make sure you include as much information as possible from the document.
+Guidelines:
+1. Keep the structure exactly as shown
+2. Leave document_id, filename, and upload_date as empty strings
+3. Set is_ruleset to true only if the document contains rules or policies
+4. For file_type, use one of: Medical Report, Legal Document, Financial Statement, Policy Document, Technical Manual, General Text
+5. In extracted_content, include relevant key-value pairs from the document
 
-Document to analyze:
+Text to analyze:
 %s`, text)
 
 	resp, err := s.model.GenerateContent(ctx, genai.Text(prompt))
@@ -105,24 +103,33 @@ Document to analyze:
 	jsonStr = strings.TrimSuffix(jsonStr, "```")
 	jsonStr = strings.TrimSpace(jsonStr)
 
-	log.Printf("Received JSON response: %s", jsonStr)
+	log.Printf("Cleaned JSON response: %s", jsonStr)
 
 	// Parse the JSON response
 	var structuredResp models.StructuredResponse
 	if err := json.Unmarshal([]byte(jsonStr), &structuredResp); err != nil {
+		log.Printf("JSON unmarshal error: %v", err)
 		return nil, fmt.Errorf("failed to parse JSON: %v\nResponse was: %s", err, jsonStr)
 	}
 
+	log.Printf("Before metadata - DocumentID: %s, Filename: %s, UploadDate: %s", 
+		structuredResp.DocumentID, structuredResp.Filename, structuredResp.UploadDate)
+
+	// Generate new UUID
+	newUUID := generateUUID()
+	log.Printf("Generated UUID: %s", newUUID)
+
 	// Add metadata
-	structuredResp.DocumentID = generateUUID()
+	structuredResp.DocumentID = newUUID
 	structuredResp.Filename = filename
 	structuredResp.UploadDate = time.Now().Format(time.RFC3339)
 
-	// Log the details of the structured response
-	log.Printf("Structured Response - IsRuleset: %v, FileType: %s",
-		structuredResp.IsRuleset,
-		structuredResp.FileType,
-	)
+	log.Printf("After metadata - DocumentID: %s, Filename: %s, UploadDate: %s", 
+		structuredResp.DocumentID, structuredResp.Filename, structuredResp.UploadDate)
+
+	// Log the complete structured response
+	respJSON, _ := json.MarshalIndent(structuredResp, "", "  ")
+	log.Printf("Final structured response:\n%s", string(respJSON))
 
 	// Determine whether to add as rule or data based on is_ruleset flag
 	if s.ruleService != nil {
