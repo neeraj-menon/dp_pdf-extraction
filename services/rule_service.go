@@ -86,10 +86,12 @@ func (s *RuleService) AddData(ctx context.Context, response *models.StructuredRe
 		response.FileType,
 	)
 
-	// Log the content being stored
+	// For resume type documents, try to extract and log personal information
 	if response.FileType == "resume" {
-		if pi := response.Content.ExtractedContent.PersonalInformation; pi != nil {
-			log.Printf("Processing resume for: %s", pi.Name)
+		if extractedContent, ok := response.Content.ExtractedContent["personal_information"].(map[string]interface{}); ok {
+			if name, ok := extractedContent["name"].(string); ok {
+				log.Printf("Processing resume for: %s", name)
+			}
 		}
 	}
 

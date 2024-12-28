@@ -1,47 +1,37 @@
 package main
 
 import (
-	"context"
 	"log"
+	"os"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/generative-ai-go/genai"
-	"google.golang.org/api/option"
 
 	"file_processor/handlers"
 	"file_processor/services"
 )
 
 func main() {
-	// Initialize context
-	ctx := context.Background()
-
 	// Set Gemini API key directly
 	geminiAPIKey := "AIzaSyDm5BZEE99IoGY0P2ZfthVbCPGgEoB44vg"
 
-	// Initialize LLM client
-	client, err := genai.NewClient(ctx, option.WithAPIKey(geminiAPIKey))
-	if err != nil {
-		log.Fatalf("Error initializing Gemini client: %v", err)
-	}
-	defer client.Close()
-
 	// Initialize services
-	imageService := services.NewImageService(client)
-	fileService := services.NewFileService(imageService)
-	processorService := services.NewProcessorService(fileService, imageService)
 	ruleService, err := services.NewRuleService()
 	if err != nil {
-		log.Fatalf("Failed to initialize rule service: %v", err)
+		log.Fatalf("Error initializing rule service: %v", err)
 	}
+	defer ruleService.Close()
+
 	geminiService, err := services.NewGeminiService(geminiAPIKey, ruleService)
 	if err != nil {
 		log.Fatalf("Error initializing Gemini service: %v", err)
 	}
 	defer geminiService.Close()
 
+	imageService := services.NewImageService(geminiService.GetClient())
+	fileService := services.NewFileService(imageService, geminiService)
+
 	// Initialize handlers
-	fileHandler := handlers.NewFileHandler(processorService, geminiService, ruleService)
+	fileHandler := handlers.NewFileHandler(fileService)
 
 	// Set up Gin router
 	router := gin.Default()
@@ -49,11 +39,23 @@ func main() {
 
 	// Configure routes
 	router.POST("/upload", fileHandler.HandleFileUpload)
-	router.POST("/process-url", fileHandler.HandleURLProcess)
+
+	// Create required directories
+	requiredDirs := []string{"uploads", "temp"}
+	for _, dir := range requiredDirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Fatalf("Failed to create directory %s: %v", dir, err)
+		}
+	}
 
 	// Start server
-	log.Println("Starting server on :8080")
-	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("Error starting server: %v", err)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	
+	log.Printf("Server starting on port %s", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }

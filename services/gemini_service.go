@@ -37,6 +37,11 @@ func NewGeminiService(apiKey string, ruleService *RuleService) (*GeminiService, 
 	}, nil
 }
 
+// GetClient returns the Gemini client for use by other services
+func (s *GeminiService) GetClient() *genai.Client {
+	return s.client
+}
+
 func generateUUID() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)

@@ -4,49 +4,54 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
-	"github.com/google/generative-ai-go/genai"
+	genai "github.com/google/generative-ai-go/genai"
 )
 
 type ImageService struct {
-	llmClient *genai.Client
+	client *genai.Client
 }
 
-func NewImageService(llmClient *genai.Client) *ImageService {
+func NewImageService(client *genai.Client) *ImageService {
 	return &ImageService{
-		llmClient: llmClient,
+		client: client,
 	}
 }
 
-func (s *ImageService) ExtractInformationFromImage(imageData []byte) (string, error) {
-	log.Printf("Starting image analysis with %d bytes of image data", len(imageData))
+func (s *ImageService) ProcessImage(imagePath string) (string, error) {
+	log.Printf("Processing image: %s", imagePath)
 
-	ctx := context.Background()
-	model := s.llmClient.GenerativeModel("gemini-1.5-flash")
-
-	prompt := []genai.Part{
-		genai.ImageData("image/jpeg", imageData),
-		genai.Text("Extract information from the image, including any text or numerical content if present."),
+	// Read image file
+	imgData, err := os.ReadFile(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("error reading image file: %v", err)
 	}
 
-	log.Printf("Sending image to Gemini for analysis")
-	resp, err := model.GenerateContent(ctx, prompt...)
+	// Create model for image processing
+	model := s.client.GenerativeModel("gemini-1.5-flash")
+
+	// Process image with Gemini Vision
+	prompt := []genai.Part{
+		genai.ImageData("image/png", imgData),
+		genai.Text("Extract all text from this image, preserving formatting and structure. Include any tables, lists, or special formatting."),
+	}
+
+	resp, err := model.GenerateContent(context.Background(), prompt...)
 	if err != nil {
-		log.Printf("Error generating content from image: %v", err)
 		return "", fmt.Errorf("error generating content: %v", err)
 	}
 
-	if resp.Candidates == nil {
-		log.Printf("No response generated from image analysis")
-		return "", fmt.Errorf("no response generated")
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("no text extracted from image")
 	}
 
-	if textPart, ok := resp.Candidates[0].Content.Parts[0].(genai.Text); ok {
-		result := string(textPart)
-		log.Printf("Successfully extracted information from image: %d characters", len(result))
-		return result, nil
+	// Get text content
+	text, ok := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
 	}
 
-	log.Printf("Unexpected response format from image analysis")
-	return "", fmt.Errorf("unexpected response format")
+	log.Printf("Successfully extracted text from image: %s", imagePath)
+	return string(text), nil
 }

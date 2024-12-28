@@ -1,29 +1,24 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-
-	"file_processor/models"
-	"file_processor/services"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"file_processor/services"
 )
 
 type FileHandler struct {
-	processor *services.ProcessorService
-	gemini    *services.GeminiService
-	rules     *services.RuleService
+	fileService *services.FileService
 }
 
-func NewFileHandler(processor *services.ProcessorService, gemini *services.GeminiService, rules *services.RuleService) *FileHandler {
+func NewFileHandler(fileService *services.FileService) *FileHandler {
 	return &FileHandler{
-		processor: processor,
-		gemini:    gemini,
-		rules:     rules,
+		fileService: fileService,
 	}
 }
 
@@ -37,73 +32,49 @@ func (h *FileHandler) HandleFileUpload(c *gin.Context) {
 		return
 	}
 
+	// Validate file type
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".pdf") {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Only PDF files are supported",
+		})
+		return
+	}
+
 	log.Printf("Received file: %s, Size: %d bytes", file.Filename, file.Size)
 
-	// Get file extension
-	ext := filepath.Ext(file.Filename)
-	log.Printf("File extension: %s", ext)
+	// Create uploads directory if it doesn't exist
+	uploadsDir := filepath.Join("uploads")
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		log.Printf("Error creating uploads directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Internal server error",
+		})
+		return
+	}
 
-	// Save file temporarily
-	tempFile := filepath.Join(os.TempDir(), file.Filename)
-	log.Printf("Saving file temporarily to: %s", tempFile)
-	if err := c.SaveUploadedFile(file, tempFile); err != nil {
+	// Save file
+	filePath := filepath.Join(uploadsDir, file.Filename)
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
 		log.Printf("Error saving file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to save file",
 		})
 		return
 	}
-	defer os.Remove(tempFile)
 
-	// Get initial processing result
-	result, err := h.processor.ProcessFile(tempFile, ext)
+	// Process PDF
+	text, imagePaths, err := h.fileService.ProcessPDF(filePath)
 	if err != nil {
+		log.Printf("Error processing PDF: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": "Failed to process PDF",
 		})
 		return
 	}
 
-	// Process with Gemini
-	structuredResp, err := h.gemini.ProcessDocument(c.Request.Context(), result.Text, file.Filename)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("failed to process with Gemini: %v", err),
-		})
-		return
-	}
-
-	log.Printf("Successfully processed file. Document ID: %s", structuredResp.DocumentID)
-	c.JSON(http.StatusOK, structuredResp)
-}
-
-func (h *FileHandler) HandleURLProcess(c *gin.Context) {
-	var input models.URLInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid URL format",
-		})
-		return
-	}
-
-	// Get initial processing result
-	result, err := h.processor.ProcessURL(input.URL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Process with Gemini
-	structuredResp, err := h.gemini.ProcessDocument(c.Request.Context(), result.Text, input.URL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("failed to process with Gemini: %v", err),
-		})
-		return
-	}
-
-	log.Printf("Successfully processed URL. Document ID: %s", structuredResp.DocumentID)
-	c.JSON(http.StatusOK, structuredResp)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "File processed successfully",
+		"text":    text,
+		"pages":   len(imagePaths),
+	})
 }
