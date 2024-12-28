@@ -38,7 +38,7 @@ func main() {
 	router.MaxMultipartMemory = 8 << 20 // 8 MiB
 
 	// Configure routes
-	router.POST("/upload", fileHandler.HandleFileUpload)
+	router.POST("/upload_document", fileHandler.HandleFileUpload)
 
 	// Create required directories
 	requiredDirs := []string{"uploads", "temp"}
